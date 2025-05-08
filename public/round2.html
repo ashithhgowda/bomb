@@ -233,7 +233,7 @@
             try {
                 const response = await fetch(`/team-data?team=${team}`);
                 if(!response.ok) console.log("Backend not connected")
-                if (!response.ok) throw new Error('Failed to load data');
+              
                 
                 const data = await response.json();
                 renderCodeButtons(data.round2);
