@@ -230,40 +230,18 @@
 
         // Load team data
         async function loadTeamData() {
-    try {
-        const response = await fetch('/team-data');
-        
-        // First check if response is HTML (error page)
-        const contentType = response.headers.get('content-type');
-        if (contentType && contentType.includes('text/html')) {
-            const errorHtml = await response.text();
-            throw new Error(`Server returned HTML (likely error): ${errorHtml.substring(0, 100)}...`);
+            try {
+                const response = await fetch(`/team-data?team=${team}`);
+                if(!response.ok) console.log("Backend not connected")
+              
+                
+                const data = await response.json();
+                renderCodeButtons(data.round2);
+            } catch (error) {
+                console.error('Error:', error);
+                showMessage('Failed to load team data. Please refresh the page.', 'error');
+            }
         }
-        
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-        }
-        
-        const data = await response.json();
-        
-        if (!data.success) {
-            throw new Error(data.error || 'Invalid team data');
-        }
-        
-        renderCodeButtons(data.round2);
-        
-    } catch (error) {
-        console.error('Team data load failed:', error);
-        showMessage(`Failed to load team data: ${error.message}`, 'error');
-        
-        // Auto-refresh only if it's likely a temporary error
-        if (!error.message.includes('Not authenticated') && 
-            !error.message.includes('Team not found')) {
-            setTimeout(() => location.reload(), 3000);
-        }
-    }
-}
 
         // Render code buttons with attempt counters
         function renderCodeButtons(round2Data) {
