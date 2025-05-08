@@ -4,18 +4,17 @@ const fs = require('fs');
 const path = require('path');
 const session = require('express-session');
 const cookieParser = require('cookie-parser');
-const FileStore = require('session-file-store')(session);
 require('dotenv').config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000; // Use environment port for production
 
 // Enhanced middleware setup
 app.use(cookieParser());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
-// Static files with cache control
+// Fix for static files in production
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders: (res, path) => {
     if (path.endsWith('.html')) {
@@ -25,172 +24,174 @@ app.use(express.static(path.join(__dirname, 'public'), {
 }));
 
 // Production-compatible session configuration
-const sessionConfig = {
-  secret: process.env.SESSION_SECRET || 'fallback-secret-for-dev',
+app.use(session({
+    secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   cookie: { 
-    secure: process.env.NODE_ENV === 'production',
+    secure: process.env.NODE_ENV === 'production' ? true : false,
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: 'lax', // Important for production
     maxAge: 24 * 60 * 60 * 1000
   },
-  store: new FileStore({
-    path: path.join(__dirname, 'sessions'),
-    ttl: 86400 // 1 day in seconds
+  // Simple file-based session store for production
+  store: new (require('session-file-store')(session))({
+    path: path.join(__dirname, 'sessions')
   })
-};
+}));
 
-if (app.get('env') === 'production') {
-  app.set('trust proxy', 1); // Trust first proxy
-  sessionConfig.cookie.secure = true; // Serve secure cookies
-}
-
-app.use(session(sessionConfig));
-
-// Data file paths
+// Data file paths - ensure they work in production
 const DATA_DIR = path.join(__dirname, 'data');
 const CODES_PATH = path.join(DATA_DIR, 'codes.json');
 const TEAMS_PATH = path.join(DATA_DIR, 'teams.json');
 
-// Initialize directories
-[DATA_DIR, path.join(__dirname, 'sessions')].forEach(dir => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-});
+// Initialize data directory and files with error handling
+if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+}
 
-// Initialize data files
+// Initialize session directory
+if (!fs.existsSync(path.join(__dirname, 'sessions'))) {
+    fs.mkdirSync(path.join(__dirname, 'sessions'), { recursive: true });
+}
+
 [CODES_PATH, TEAMS_PATH].forEach(file => {
-  if (!fs.existsSync(file)) {
-    fs.writeFileSync(file, file === TEAMS_PATH ? '{}' : '[]', 'utf8');
-  }
+    if (!fs.existsSync(file)) {
+        fs.writeFileSync(file, file === TEAMS_PATH ? '{}' : '[]', 'utf8');
+    }
 });
 
-// Data structures
+// Enhanced team data structure
 const DEFAULT_TEAM = {
-  password: '',
-  points: 0,
-  currentClue: null,
-  attempts: {},
-  disqualified: false
+    password: '',
+    points: 0,
+    currentClue: null,
+    attempts: {},
+    disqualified: false
 };
 
-// Data loading middleware
+// Improved data loading middleware
 app.use((req, res, next) => {
-  try {
-    req.codes = JSON.parse(fs.readFileSync(CODES_PATH, 'utf-8')) || [];
-    req.teams = JSON.parse(fs.readFileSync(TEAMS_PATH, 'utf-8')) || {};
-    next();
-  } catch (err) {
-    console.error('Error loading data:', err);
-    req.codes = [];
-    req.teams = {};
-    next(err);
-  }
+    try {
+        // Read and parse files safely
+        const codesData = fs.readFileSync(CODES_PATH, 'utf-8');
+        const teamsData = fs.readFileSync(TEAMS_PATH, 'utf-8');
+        
+        req.codes = codesData ? JSON.parse(codesData) : [];
+        req.teams = teamsData ? JSON.parse(teamsData) : {};
+        
+        next();
+    } catch (err) {
+        console.error('Error loading data:', err);
+        // Initialize with empty data if there's an error
+        req.codes = [];
+        req.teams = {};
+        next(err);
+    }
 });
 
 // Save functions
 function saveCodes(codes) {
-  try {
-    fs.writeFileSync(CODES_PATH, JSON.stringify(codes, null, 2));
-    return true;
-  } catch (err) {
-    console.error('Error saving codes:', err);
-    return false;
-  }
+    try {
+        fs.writeFileSync(CODES_PATH, JSON.stringify(codes, null, 2));
+        return true;
+    } catch (err) {
+        console.error('Error saving codes:', err);
+        return false;
+    }
 }
 
 function saveTeams(teams) {
-  try {
-    fs.writeFileSync(TEAMS_PATH, JSON.stringify(teams, null, 2));
-    return true;
-  } catch (err) {
-    console.error('Error saving teams:', err);
-    return false;
-  }
+    try {
+        fs.writeFileSync(TEAMS_PATH, JSON.stringify(teams, null, 2));
+        return true;
+    } catch (err) {
+        console.error('Error saving teams:', err);
+        return false;
+    }
 }
 
 // Auth middleware
 function checkAuth(req, res, next) {
-  if (req.session.team || req.path === '/login') {
-    return next();
-  }
-  res.redirect('/index.html?message=Session+expired.+Please+login+again.&messageType=error');
+    if (req.session.team || req.path.includes('/login')) {
+        return next();
+    }
+    res.redirect('/index.html?message=Session+expired.+Please+login+again.&messageType=error');
 }
 
-// Routes
+// Login route
 app.post('/login', (req, res) => {
-  const { teamName, password } = req.body;
-  
-  if (!teamName || !password) {
-    return res.redirect('/index.html?message=Team+name+and+password+required&messageType=error');
-  }
-
-  if (!req.teams[teamName] || req.teams[teamName].password !== password) {
-    return res.redirect('/index.html?message=Invalid+credentials.+Please+try+again.&messageType=error');
-  }
-
-  req.session.team = teamName;
-  req.session.save(err => {
-    if (err) {
-      console.error('Session save error:', err);
-      return res.redirect('/index.html?message=Login+failed&messageType=error');
+    const { teamName, password } = req.body;
+    
+    if (!teamName || !password) {
+        return res.redirect('/index.html?message=Team+name+and+password+required&messageType=error');
     }
 
-    if (teamName.toLowerCase() === 'admin') {
-      return res.redirect('/admin.html');
+    if (!req.teams[teamName] || req.teams[teamName].password !== password) {
+        return res.redirect('/index.html?message=Invalid+credentials.+Please+try+again.&messageType=error');
     }
 
-    if (req.teams[teamName].disqualified) {
-      return res.redirect(`/dashboard.html?message=Your+team+has+been+disqualified.&messageType=error`);
-    }
+    req.session.team = teamName;
+    req.session.save(err => {
+        if (err) {
+            console.error('Session save error:', err);
+            return res.redirect('/index.html?message=Login+failed&messageType=error');
+        }
 
-    if (!req.teams[teamName].round2) {
-      req.teams[teamName].round2 = {
-        availableCodes: Array.from({length: 12}, (_, i) => `code${i+1}`),
-        frozenCodes: [],
-        attempts: {}
-      };
-      saveTeams(req.teams);
-    }
+        if (teamName.toLowerCase() === 'admin') {
+            return res.redirect('/admin.html');
+        }
 
-    res.redirect('/rules_round2.html');
-  });
+        if (req.teams[teamName].disqualified) {
+            return res.redirect(`/dashboard.html?team=${encodeURIComponent(teamName)}&message=Your+team+has+been+disqualified.&messageType=error`);
+        }
+
+        // Initialize round2 data if it doesn't exist
+        if (!req.teams[teamName].round2) {
+            req.teams[teamName].round2 = {
+                availableCodes: Array.from({length: 12}, (_, i) => `code${i+1}`),
+                frozenCodes: [],
+                attempts: {}
+            };
+            saveTeams(req.teams);
+        }
+
+        return res.redirect(`/rules_round2.html?team=${encodeURIComponent(teamName)}`);
+    });
 });
 
 // Protected routes
-['/dashboard.html', '/admin.html', '/rules_round2.html', '/round2.html'].forEach(route => {
-  app.get(route, checkAuth, (req, res) => {
-    res.sendFile(path.join(__dirname, `public${route}`));
-  });
+app.get('/dashboard.html', checkAuth, (req, res) => {
+    res.sendFile(path.join(__dirname, 'public/dashboard.html'));
 });
 
-// Team data endpoint (fixed)
-app.get('/team-data', checkAuth, (req, res) => {
-  try {
-    const teamName = req.session.team;
-    if (!teamName || !req.teams[teamName]) {
-      return res.status(404).json({ error: "Team not found" });
+app.get('/admin.html', checkAuth, (req, res) => {
+    if (req.session.team?.toLowerCase() !== 'admin') {
+        return res.redirect('/index.html');
     }
+    res.sendFile(path.join(__dirname, 'public/admin.html'));
+});
 
-    if (!req.teams[teamName].round2) {
-      req.teams[teamName].round2 = {
-        availableCodes: Array.from({length: 12}, (_, i) => `code${i+1}`),
-        frozenCodes: [],
-        attempts: {}
-      };
-      saveTeams(req.teams);
+// Rules page route
+app.get('/rules_round2.html', checkAuth, (req, res) => {
+    res.sendFile(path.join(__dirname, 'public/rules_round2.html'));
+});
+
+// Round 2 code selection page
+app.get('/round2.html', checkAuth, (req, res) => {
+    const team = req.session.team;
+    const teamData = req.teams[team];
+    
+    if (!teamData.round2) {
+        teamData.round2 = {
+            availableCodes: Array.from({length: 12}, (_, i) => `code${i+1}`),
+            frozenCodes: [],
+            attempts: {}
+        };
+        saveTeams(req.teams);
     }
-
-    res.json({
-      team: teamName,
-      round2: req.teams[teamName].round2
-    });
-  } catch (error) {
-    console.error('Error in /team-data:', error);
-    res.status(500).json({ error: "Failed to load team data" });
-  }
+    
+    res.sendFile(path.join(__dirname, 'public/round2.html'));
 });
 
 // Handle code selection
@@ -560,7 +561,41 @@ app.post('/reset-points', (req, res) => {
     res.send("All points reset successfully.");
 });
 // Add this endpoint to your server.js (before app.listen)
+app.get('/team-data', checkAuth, (req, res) => {
+    try {
+        const teamName = req.session.team;
+        
+        if (!teamName) {
+            return res.status(401).json({ error: "Not authenticated" });
+        }
 
+        // Read fresh data to avoid cache issues
+        const teamsData = fs.readFileSync(TEAMS_PATH, 'utf-8');
+        const teams = teamsData ? JSON.parse(teamsData) : {};
+        
+        if (!teams[teamName]) {
+            return res.status(404).json({ error: "Team not found" });
+        }
+
+        // Initialize round2 data if it doesn't exist
+        if (!teams[teamName].round2) {
+            teams[teamName].round2 = {
+                availableCodes: Array.from({length: 12}, (_, i) => `code${i+1}`),
+                frozenCodes: [],
+                attempts: {}
+            };
+            fs.writeFileSync(TEAMS_PATH, JSON.stringify(teams, null, 2));
+        }
+
+        res.json({
+            team: teamName,
+            round2: teams[teamName].round2
+        });
+    } catch (error) {
+        console.error('Error in /team-data:', error);
+        res.status(500).json({ error: "Failed to load team data" });
+    }
+});
 app.get('/test-session', (req, res) => {
     req.session.test = 'working';
     res.send(`Session test: ${req.session.test}. Secret length: ${process.env.SESSION_SECRET?.length || 0} chars`);
@@ -570,10 +605,10 @@ app.get('/test-session', (req, res) => {
 app.use((err, req, res, next) => {
     console.error('Server error:', err);
     res.status(500).json({ error: 'Internal server error' });
-  });
-  
-  // Start server
-  app.listen(PORT, () => {
+});
+
+// Start server
+app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
     console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  });
+});
