@@ -210,116 +210,138 @@
     </div>
 
     <script>
-        // Get team name from URL
-        const urlParams = new URLSearchParams(window.location.search);
-        const team = urlParams.get('team');
-        
-        if (team) {
-            document.getElementById('teamName').textContent = team;
-        }
-
-        // Display message if any
-        const message = urlParams.get('message');
-        const messageType = urlParams.get('messageType');
-        if (message && messageType) {
-            const messageDiv = document.getElementById('message');
-            messageDiv.textContent = decodeURIComponent(message);
-            messageDiv.style.display = 'block';
-            messageDiv.classList.add(messageType);
-        }
-
-        // Load team data
-        async function loadTeamData() {
-            try {
-                const response = await fetch(`/team-data?team=${team}`);
-                if (!response.ok) throw new Error('Failed to load data');
-                
-                const data = await response.json();
-                renderCodeButtons(data.round2);
-            } catch (error) {
-                console.error('Error:', error);
-                showMessage('Failed to load team data. Please refresh the page.', 'error');
-            }
-        }
-
-        // Render code buttons with attempt counters
-        function renderCodeButtons(round2Data) {
-            const container = document.getElementById('codeContainer');
-            container.innerHTML = '';
-            
-            for (let i = 1; i <= 12; i++) {
-                const code = `code${i}`;
-                const isFrozen = round2Data.frozenCodes.includes(code);
-                const attempts = round2Data.attempts[code] || 0;
-                
-                const btn = document.createElement('button');
-                btn.className = `code-btn ${isFrozen ? 'frozen' : ''}`;
-                btn.dataset.code = code;
-                
-                let btnHTML = `CODE ${i}`;
-                if (attempts > 0) {
-                    btnHTML += `<span class="attempts">Attempts: ${attempts}/3</span>`;
-                }
-                if (isFrozen) {
-                    btnHTML += `<span class="attempts">LOCKED</span>`;
-                    btn.disabled = true;
-                }
-                
-                btn.innerHTML = btnHTML;
-                container.appendChild(btn);
-            }
-            
-            // Add event listeners to all buttons
-            document.querySelectorAll('.code-btn:not(.frozen)').forEach(btn => {
-                btn.addEventListener('click', () => selectCode(btn.dataset.code));
-            });
-        }
-
-        // Handle code selection with automatic redirect on max attempts
-        async function selectCode(code) {
-            try {
-                const response = await fetch('/select-code', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ team, code })
-                });
-                
-                const result = await response.json();
-                
-                if (result.redirect) {
-                    // Redirect to dashboard for attempts < 3
-                    if (result.redirect.includes('dashboard')) {
-                        window.location.href = result.redirect;
-                    } 
-                    // Auto-redirect back to round2 when code is frozen
-                    else if (result.redirect.includes('round2')) {
-                        window.location.href = result.redirect;
-                    }
-                } else {
-                    throw new Error(result.error || "Failed to select code");
-                }
-            } catch (error) {
-                console.error("Code selection failed:", error);
-                showMessage(error.message, 'error');
-                // Reload data to show updated attempt counts
-                loadTeamData();
-            }
-        }
-
-        function showMessage(text, type) {
-            const messageDiv = document.getElementById('message');
-            messageDiv.textContent = text;
-            messageDiv.className = `message ${type}`;
-            messageDiv.style.display = 'block';
-            
-            // Auto-hide message after 5 seconds
-            setTimeout(() => {
-                messageDiv.style.display = 'none';
-            }, 5000);
-        }
-
-        // Initialize page
-        document.addEventListener('DOMContentLoaded', loadTeamData);
-    </script>
+      // Display team name from session (no longer from URL)
+      async function displayTeamName() {
+          try {
+              const response = await fetch('/team-data', {
+                  credentials: 'include' // Required for session cookies
+              });
+              
+              if (!response.ok) throw new Error('Failed to load team data');
+              
+              const data = await response.json();
+              document.getElementById('teamName').textContent = data.team;
+              return data.team; // Return team name for other functions
+          } catch (error) {
+              console.error('Error:', error);
+              showMessage('Failed to load team data. Please refresh the page.', 'error');
+              return null;
+          }
+      }
+  
+      // Display message if any (from URL parameters)
+      function displayUrlMessage() {
+          const urlParams = new URLSearchParams(window.location.search);
+          const message = urlParams.get('message');
+          const messageType = urlParams.get('messageType');
+          
+          if (message && messageType) {
+              const messageDiv = document.getElementById('message');
+              messageDiv.textContent = decodeURIComponent(message);
+              messageDiv.style.display = 'block';
+              messageDiv.classList.add(messageType);
+              
+              // Clear the message from URL
+              const cleanUrl = window.location.pathname;
+              window.history.replaceState({}, document.title, cleanUrl);
+          }
+      }
+  
+      // Load team data and render code buttons
+      async function loadTeamData() {
+          try {
+              const response = await fetch('/team-data', {
+                  credentials: 'include'
+              });
+              
+              if (!response.ok) throw new Error('Failed to load data');
+              
+              const data = await response.json();
+              renderCodeButtons(data.round2);
+          } catch (error) {
+              console.error('Error:', error);
+              showMessage('Failed to load team data. Please refresh the page.', 'error');
+          }
+      }
+  
+      // Render code buttons with attempt counters
+      function renderCodeButtons(round2Data) {
+          const container = document.getElementById('codeContainer');
+          container.innerHTML = '';
+          
+          for (let i = 1; i <= 12; i++) {
+              const code = `code${i}`;
+              const isFrozen = round2Data.frozenCodes.includes(code);
+              const attempts = round2Data.attempts[code] || 0;
+              
+              const btn = document.createElement('button');
+              btn.className = `code-btn ${isFrozen ? 'frozen' : ''}`;
+              btn.dataset.code = code;
+              
+              let btnHTML = `CODE ${i}`;
+              if (attempts > 0) {
+                  btnHTML += `<span class="attempts">Attempts: ${attempts}/3</span>`;
+              }
+              if (isFrozen) {
+                  btnHTML += `<span class="attempts">LOCKED</span>`;
+                  btn.disabled = true;
+              }
+              
+              btn.innerHTML = btnHTML;
+              container.appendChild(btn);
+          }
+          
+          // Add event listeners to all active buttons
+          document.querySelectorAll('.code-btn:not(.frozen)').forEach(btn => {
+              btn.addEventListener('click', () => selectCode(btn.dataset.code));
+          });
+      }
+  
+      // Handle code selection
+      async function selectCode(code) {
+          try {
+              const response = await fetch('/select-code', {
+                  method: 'POST',
+                  headers: { 
+                      'Content-Type': 'application/json',
+                  },
+                  credentials: 'include', // Important for sessions
+                  body: JSON.stringify({ code }) // Team comes from session
+              });
+              
+              const result = await response.json();
+              
+              if (result.redirect) {
+                  window.location.href = result.redirect;
+              } else {
+                  throw new Error(result.error || "Failed to select code");
+              }
+          } catch (error) {
+              console.error("Code selection failed:", error);
+              showMessage(error.message, 'error');
+              // Reload data to show updated attempt counts
+              loadTeamData();
+          }
+      }
+  
+      function showMessage(text, type) {
+          const messageDiv = document.getElementById('message');
+          messageDiv.textContent = text;
+          messageDiv.className = `message ${type}`;
+          messageDiv.style.display = 'block';
+          
+          // Auto-hide message after 5 seconds
+          setTimeout(() => {
+              messageDiv.style.display = 'none';
+          }, 5000);
+      }
+  
+      // Initialize page
+      document.addEventListener('DOMContentLoaded', async () => {
+          displayUrlMessage();
+          await displayTeamName();
+          await loadTeamData();
+      });
+  </script>
 </body>
 </html>
