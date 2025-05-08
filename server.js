@@ -569,15 +569,18 @@ app.get('/team-data', checkAuth, (req, res) => {
             return res.status(401).json({ error: "Not authenticated" });
         }
 
-        // Read fresh data to avoid cache issues
+        // Read fresh data (don't rely on middleware cache)
         const teamsData = fs.readFileSync(TEAMS_PATH, 'utf-8');
         const teams = teamsData ? JSON.parse(teamsData) : {};
         
         if (!teams[teamName]) {
-            return res.status(404).json({ error: "Team not found" });
+            return res.status(404).json({ 
+                error: "Team not found",
+                team: teamName 
+            });
         }
 
-        // Initialize round2 data if it doesn't exist
+        // Initialize round2 if missing
         if (!teams[teamName].round2) {
             teams[teamName].round2 = {
                 availableCodes: Array.from({length: 12}, (_, i) => `code${i+1}`),
@@ -588,12 +591,17 @@ app.get('/team-data', checkAuth, (req, res) => {
         }
 
         res.json({
+            success: true,
             team: teamName,
             round2: teams[teamName].round2
         });
+
     } catch (error) {
-        console.error('Error in /team-data:', error);
-        res.status(500).json({ error: "Failed to load team data" });
+        console.error('Team data error:', error);
+        res.status(500).json({ 
+            error: "Server error",
+            details: error.message 
+        });
     }
 });
 app.get('/test-session', (req, res) => {
